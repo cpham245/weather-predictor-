@@ -1,0 +1,981 @@
+---
+title: "**Predicting the Weather**"
+author: "**Christina Pham**"
+date: "**2024-11-04**"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+---
+
+<style type="text/css">
+
+body, td {
+  font-family: Calibri;
+  font-size: 14px;
+}
+code.r{
+  font-size: 11px;
+}
+pre {
+  font-size: 11px
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+```
+
+## Introduction
+
+My project aims to build a machine learning model to predict weather types based on various meteorological features. Using synthetic data generated to mimic real-world weather conditions, the dataset categorizes weather into four main types: `Rainy`, `Sunny`, `Cloudy`, and `Snowy`. This project will involve exploring, preprocessing, and building classification models to predict the type of weather based on the features provided.
+
+```{r, echo=FALSE, out.width = '40%', out.height = '40%'}
+knitr::include_graphics("weather-wheel.gif", error = FALSE)
+
+```
+
+### Why Predict the Weather?
+
+Weather impacts every part of our lives, from the way we plan our days to the way we fell and experience the world around us. As climate patterns grow more unpredictable, having a clearer understanding of the factors that drive different weather types becomes even more important. I hope to create a model that not only provides accurate forecasts but also helps people understand the underlying factors that shape the weather.
+
+```{r, echo=FALSE, out.width = '50%', out.height = '50%'}
+knitr::include_graphics("why.jpg", error = FALSE)
+```
+
+### Our Goal
+
+The question I'd like to answer is "**How predictable is the weather; what factors influence different weather patterns?**".
+
+It's understandable to think that variables like temperature, humidity, pressure, and wind patterns all play significant roles in determining the weather we experience each day. My goal is to test if it's possible to develop a model that can not only forecast the weather but also shed light on the underlying factors driving these conditions.
+
+## Exploratory Data Analysis 🔎
+
+In this section, we'll dive into the dataset to uncover initial insights and understand the structure of the data. Our goal is to set the foundation for feature engineering and modeling by exploring key patterns and relationships in the data.
+
+### Loading Packages and Our Data 📦
+```{r, echo=FALSE, out.width = '30%', out.height = '30%'}
+knitr::include_graphics("loading.gif", error = FALSE)
+```
+
+Let's first load in our weather data.
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(tidymodels)
+library(corrplot)
+library(ggplot2)
+library(discrim)
+library(DT)
+library(ISLR2)
+library(kernlab)
+library(yardstick)
+library(rpart)
+library(rpart.plot)
+library(vip)
+# Loading Dataset
+weather <- read_csv("~/PSTAT 131/weather_classification_data.csv") 
+tidymodels_prefer()
+set.seed(1178)
+
+#Make interactive datatable
+datatable(weather, options = list(scrollX = TRUE, pageLength = 6))
+```
+
+This weather data was obtained from the Kaggle dataset, ["Weather Type Classification"](https://www.kaggle.com/datasets/nikhil7280/weather-type-classification). The dataset was created by Nikhil Narayan.
+
+### Data Observations 🧐
+
+Since we loaded in our dataset, let's see how many observations and features we have.
+
+```{r class.source = "fold-show"}
+# dim() to see how many rows and columns are in our dataset
+dim(weather)
+```
+
+From above, we see that the data set contains 13,200 total rows and 11 total predictors! Our data set doesn't have too many predictors to narrow down, but we will still check to see which predictors are not necessary.
+
+Let's take a look at the list of potential predictors.
+
+```{r class.source = "fold-show"}
+# Checking the names of our predictors
+colnames(weather)
+
+```
+
+### Removing Predictors? ❌
+
+All of variables seem to be relevant to our dataset, we will not be dropping any of them for now.
+
+### Categorical Variables 🐱
+
+Our categorical variables are `Cloud Cover`, `Season`, `Location`, and `Weather Type`.
+
+```{r}
+# Checking categorical variables
+cat_weather <- weather %>%
+  select(where(is.character), where(is.factor)) %>%
+  names()
+
+cat_weather
+```
+
+### Numeric Variables 🔢
+
+Our numeric variables are `Temperature`, `Humidity`, `Wind Speed`, `Precipitation (%)`, `Atmospheric Pressure`, `UV Index`, and `Visibility (km)`.
+
+```{r}
+# Checking numeric variables
+num_weather <- weather %>%
+  select(where(is.numeric)) %>%
+  names()
+
+num_weather
+```
+
+### Data Cleaning 🧹
+
+Let's first rename our columns for easier accessibility and readability.
+
+```{r class.source = "fold-show"}
+#Renaming columns
+weather <- weather %>%
+  rename(
+    temp = Temperature,
+    humidity = Humidity,
+    windspeed = `Wind Speed`,
+    precip = `Precipitation (%)`,
+    cloudcover = `Cloud Cover`,
+    atmospres = `Atmospheric Pressure`,
+    uvindex = `UV Index`,
+    season = Season,
+    visibility = `Visibility (km)`,
+    location = Location,
+    weather_type = `Weather Type`)
+
+#Check Our Renamed Predictors
+colnames(weather)
+```
+
+Perfect! Our new column names will make it easier to search them up.
+
+### Factoring Categorical Variables 🫴
+
+By converting our categorical variables into factors, they will be easier to handle during modeling.
+
+```{r class.source = "fold-show"}
+weather <- weather %>%
+  mutate(weather_type = factor(weather_type, 
+                               levels = c("Rainy", "Sunny", "Cloudy", "Snowy")),
+         cloudcover = as.factor(cloudcover),
+         season = as.factor(season),
+         location = as.factor(location))
+
+```
+
+### Missing Values? ☹️
+
+Before modeling, we need to check if we have any missing values in our dataset.
+
+```{r}
+# Checking if there are any missing values in our data set
+sum(is.na(weather))
+```
+
+Lucky! Lucky! We see that there is no missing values in our dataset so there will be no need for imputation.
+
+## Describing the Predictors 🤓
+
+After cleaning the data, let’s take a closer look at the remaining features. Below is a detailed description of each predictor that we will use in our final model:
+
+-   `temp` (numeric): The temperature in degrees *Celsius*, ranging from extreme cold to extreme heat.
+
+-   `humidity`(numeric): The humidity percentage, including values above 100% to introduce outliers.
+
+-   `windspeed`(numeric): The wind speed in kilometers per hour, with a range including unrealistically high values.
+
+-   `precip`(numeric): The precipitation percentage, including outlier values.
+
+-   `cloudcover`(categorical): The cloud cover description.
+
+-   `atmospres`(numeric): The atmospheric pressure in hPa, covering a wide range.
+
+-   `uvindex`(numeric): The UV index, indicating the strength of ultraviolet radiation.
+
+-   `season`(categorical): The season during which the data was recorded.
+
+-   `visibility`(numeric): The visibility in kilometers, including very low or very high values.
+
+-   `location`(categorical): The type of location where the data was recorded.
+
+-   `weather_type`(categorical): The target variable for classification, indicating the weather type.
+
+## Visual EDA ✨
+
+Our data is now ready to go, so let’s dive into some visual exploratory data analysis! Before we get into the exciting part of building our predictive models, it’s important to understand the relationships between our predictors and the target variable, `weather_type`. We’ll start by examining the distribution of our response variable and identifying potential correlations between predictors. Additionally, we’ll create some visualizations using `ggplot2` to explore how specific features like `Temperature`, `Humidity`, and `Cloud Cover` affect the weather type.
+ 
+### Variable Correlation Plot 🖇️
+
+To identify potential multicollinearity and understand the relationships between our numeric predictors, we’ll create a correlation matrix. This matrix will help us see which features are strongly correlated, and could inform our feature selection process later on.
+
+```{r}
+weather %>%
+  select(where(is.numeric)) %>%
+  cor() %>%
+  corrplot(type = 'lower', diag = FALSE, method = 'color', addCoef.col = 'black', number.cex = 0.6, tl.cex = 0.6) 
+```
+
+From the correlation plot above, we can draw several interesting insights about the relationships between our numerical predictors. We see that `humidity` and `precip` are highly correlated, which makes sense since humid air typically holds more moisture, leading to higher chances of rain. We also see that there is a moderate positive correlation between `temp` and `uvindex` which also makes sense since higher temperatures often occur on sunny days with more ultraviolet radiation. The stronger the sunlight, the higher the UV index, typically leading to warmer conditions. Additionally, there is a negative correlation between `visibility` and both `humidity` and `precip`. This alighns with our expected results since fog, rain, or other forms of precipitation often reduce visibility. High humidity also contributes to haze or fog, reducing visibility further. Surprisingly, `atmospres` does not show a strong correlation with other variables. I had expected pressure to play a significant part in weather changes, such as influencing wind speeds or precipitation patterns.
+
+### Distributions 📊
+
+Now that we have explored the relationships between our predictors using a correlation plot, let's take a closer look at the individual distributions of some key variables. We’ll create visualizations to understand how these features vary across different weather types and identify any patterns that may inform our model building.
+
+### Weather Type 🌧️🌞☁️❄️
+
+First, let's take a look at the distribution of our outcome, `weather_type`.
+
+```{r}
+weather %>%
+  ggplot(aes(x = weather_type, fill = weather_type)) +
+  geom_bar(color = "black") +
+  scale_fill_brewer(palette = "Set3") +
+  xlab("Weather Type") +
+  ylab("Count")+
+  ggtitle("Distribution of Weather Types")+
+  theme_minimal() +
+  theme(plot.title = element_text(hjust=0.6)) 
+
+
+```
+
+It seems that there is an even distribution of weather types in the dataset, each having around 3300 observations, so there is no unbalanced data.
+
+### Temperature 🌡️
+
+Temperature is a key factor in shaping weather patterns. Colder temperatures align with snowy conditions, while warmer temperatures are typical for sunny weather. To better understand how temperature varies across different weather types, we will create a bar plot. This visualization will help us see the general temperature trends for each weather category.
+
+```{r}
+# Create a bar plot to show the distribution of temperature (°C) across weather types
+weather %>%
+  ggplot(aes(x = temp, fill = weather_type)) +
+  geom_histogram(bins = 30, color = 'black') +
+  scale_fill_brewer(palette = "Set3") +
+  xlab("Temperature (°C) ") +
+  ylab("Proportion") +
+  ggtitle("Temperature Distribution across Weather Types") +
+  theme_minimal() +  
+  theme(plot.title = element_text(hjust=0.6))
+```
+
+As we can see in the plot below, snowy conditions are most common at the lowest temperatures, while sunny weather peaks at much warmer ranges. In moderate temperature ranges (0°C to 40°C), we see a mix of cloudy and rainy days, reflecting the versatility of these weather types across different seasons. For context, temperatures above 30°C (86°F) would be considered quite hot, signaling summer-like conditions, while temperatures below 0°C (32°F) are typical for winter days with potential frost or snow.
+
+### Humidity 💦
+
+Humidity is a crucial factor influencing weather conditions, as it represents the amount of moisture in the air. High humidity often accompanies rainy and overcast days, where moisture levels in the atmosphere are elevated. In contrast, lower humidity is typically observed during clear, sunny conditions.
+
+```{r}
+weather %>%
+  ggplot(aes(x = humidity, fill = weather_type)) +
+  geom_histogram(bins = 30, color = 'black', alpha = 0.7) + 
+  scale_fill_brewer(palette = "Set3") +
+  xlab("Humidity") +
+  ylab("Count") +
+  ggtitle("Humidity Distribution Across Weather Types") +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust=0.5)) 
+
+```
+
+From our histogram, we notice that Cloudy and Rainy weather types dominate the mid-to-high humidity range (50% to 80%), indicating moisture-rich conditions. Snowy weather also peaks in this range but is slightly more dispersed in the higher, while Sunny weather displays a broader distribution with fewer instances at high humidity levels.
+
+### Windspeed 🍃
+
+Windspeed reflects the intensity of atmospheric activity. Strong winds are usually associated with stormy or unsettled weather, while lighter winds typically occur during calm, clear conditions.
+
+```{r}
+weather %>%
+  ggplot(aes(x = weather_type, y = windspeed, fill = weather_type)) +
+  geom_boxplot(color = "black") +
+  scale_fill_brewer(palette = "Set3") +
+  xlab("Weather Type") +
+  ylab("Wind Speed (km/hr)") +
+  ggtitle("Windspeed Distribution Across Weather Types") +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust=0.5)) +
+  coord_flip()
+
+```
+
+As we can see above, Snowy and Rainy weather types exhibit the highest wind speeds, with many outliers indicating gusty conditions typical of storms. On the other hand, Sunny and Cloudy weather types generally have lower wind speeds, indicative of more stable and tranquil conditions.
+
+### Atmospheric Pressure 💨
+
+Atmospheric pressure plays a key role in shaping weather types. High pressure is linked to stable, clear skies and sunny weather, while low pressure promotes rising air, leading to cloud formation and precipitation, common in Rainy and Snowy conditions. Cloudy weather often falls in between, with moderate pressure levels that support some cloud cover but not enough for heavy rain or snow.
+
+```{r}
+weather %>%
+  ggplot(aes(x = atmospres, fill = weather_type)) +
+  geom_histogram(bins = 40, color = "black") +
+  scale_fill_brewer(palette = "Set3") +
+  xlab("Weather Type") +
+  ylab("Atmospheric Pressure (hPa)") +
+  ggtitle("Atmospheric Pressure Distribution Across Weather Types") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust=0.5)) 
+
+
+```
+
+From our results, most of the pressure readings are concentrated between 1000 and 1040 hPa across all waether types. Cloudy and Sunny weather types dominate the higher pressure range, while Snowy and Rainy weather types appear more frequently at slightly lower pressures, aligning with the atmospheric instability typically associated with storms. Therefore, lower pressures correlate with adverse weather, while higher pressures are linked to clearer, calmer conditions.
+
+### Cloud Cover ☁️
+
+For our final visual, we're going to take a look at the distribution of cloud cover. In general, we expect Cloudy and Rainy weather types to have higher cloud cover, while Sunny weather should show lower cloud cover.
+
+```{r}
+weather %>%
+  ggplot(aes(x = cloudcover, fill = weather_type)) +
+  geom_bar(bins = 30, color = "black") +
+  scale_fill_brewer(palette = "Set3") +
+  xlab("Cloud Cover") +
+  ylab("Proportion") +
+  ggtitle("Cloud Cover Distribution Across Weather Types") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust=0.5)) 
+
+```
+
+As expected, Overcast conditions are dominated by Cloudy, Rainy, and Snowy weather types, indicating high cloud coverage typically associated with these conditions. Meanwhile, sunny weather is primarily seen in the Clear cloud cover category, reflecting minimal cloud conditions. I found it interesting that the Party Cloudy category shows a balanced mixture of all the weather types, but it makes sense since this cloud cover state often serves as a transitional phase for preceding rain, or sigfnaling a shift towards clearer skies. The Clear category is entirely made up of sunny weather, reinforcing the idea between minimal cloud cover and fair weather.
+
+## Setting Up Our Models ⏫
+
+With our data exploration complete and key variables identified, we’re ready to start building the predictive models. We'll begin by splitting our data into training and testing sets to evaluate model performance effectively. Next we'll set up a preprocessing recipe to standardize and prepare the features for modeling. Finally, we'll implement cross-validation to ensure our models are robust and generalize well across different subsets of the dataset. Let's dive in and start training!
+
+### Data Split
+
+As we move into model building, our first task is to split the dataset into two parts: a training set (70%) for developing the models, and a testing (30%) that will be used later to evaluate their performance. We’ll start by setting a random seed to ensure that the split is reproducible every time we run the process. Then, we’ll perform a stratified split to maintain the balance of our target variable `weather_type` across both sets, ensuring fair and consistent evaluation during testing.
+
+```{r}
+#Set seed
+set.seed(1178)
+
+#Split into training and testing set
+weather_split <- weather%>%
+  initial_split(prop = 0.70, strata = weather_type)
+
+weather_train <- training(weather_split) 
+weather_test <- testing(weather_split) 
+
+```
+
+Let's first take a look at the dimensions of our training and testing set. For our training set, we see that we have 9240 observations which is about 70% of our weather dataset.
+
+```{r}
+#Dimensions of testing set
+dim(weather_train) #9240
+
+```
+
+And for our testing set, we have 3960 observations which is about 30% of our weather dataset.
+
+```{r}
+# Dimensions of training set
+dim(weather_test) #3960
+```
+
+### Creating our Recipe 🥣
+
+To ensure consistency across all models, we’ll create a recipe for preprocessing our data, adjusting it only when necessary for specific models. This recipe will standardize the predictors and prepare the categorical variables for analysis.
+
+The predictors selected for our recipe include `temp`, `humidity`, `windspeed`, `precip`, `cloudcover`, `atmospres`, `uvindex`, `season`, `visibility`, and `location`. These variables were chosen based on their relevance to predicting weather types as observed in our exploratory analysis.
+
+In this recipe, we will:
+
+-   Encode Categorical Variables: Transform categorical predictors like cloudcover and season into dummy variables to make them usable in the models.
+
+-   Normalize Predictors: Center and scale all numeric predictors to prevent variables with larger ranges from dominating the model.
+
+-   Preprocessing: Use the same recipe for all models to maintain consistency, reducing the chance of discrepancies in variable handling.
+
+### Checking our columns within our categorical variables
+
+```{r class.source = "fold-show"}
+weather_recipe <- recipe(weather_type ~ temp + humidity + windspeed +   
+                         precip + cloudcover + atmospres + uvindex +    
+                         season + visibility + location, data = weather_train) %>% 
+  step_dummy(cloudcover, season, location, one_hot = TRUE) %>%  # one-hot-encoding
+  prep()
+
+# Bake the recipe and inspect the dummy variables
+weather_bake <- bake(weather_recipe, new_data = NULL)
+
+#Summarize totals for dummy variables
+weathercloud_total <- weather_bake %>%
+  select(starts_with("cloudcover"), starts_with("season"), starts_with("location")) %>%
+  summarise(across(everything(), sum))
+
+weathercloud_total
+```
+
+Taking a look, we see that `cloudcover = cloudy` only has 279 observations whereas `cloudcover = overcast` has 4256 observations, `cloudcover = clear` has 1481 observations, and `cloudcover = party cloudy` has 3224 observations. Since there are so few cloudy observations, we can choose to remove or merge it from our dataset. In our case, we will be merging cloudy observations with overcast observations.
+
+### Merging Cloudy with Overcast Observations
+
+```{r class.source = "fold-show"}
+# For training set
+weather_train <- weather_train %>%
+  mutate(cloudcover = as.character(cloudcover)) %>% # ensure it's a character column
+  mutate(cloudcover = recode(cloudcover, "cloudy" = "overcast")) %>% # recode values
+  mutate(cloudcover = as.factor(cloudcover)) # convert back to factor
+
+# For testing set
+weather_test <- weather_test %>%
+  mutate(cloudcover = as.character(cloudcover)) %>% # ensure it's a character column
+  mutate(cloudcover = recode(cloudcover, "cloudy" = "overcast")) %>% # recode values
+  mutate(cloudcover = as.factor(cloudcover)) # convert back to factor
+
+# Check Merge observations
+weather_recipe <- recipe(weather_type ~ temp + humidity + windspeed +   
+                         precip + cloudcover + atmospres + uvindex +    
+                         season + visibility + location, data = weather_train) %>% 
+  step_dummy(cloudcover, season, location, one_hot = TRUE) %>%  # one-hot-encoding
+  prep()
+
+# Bake the recipe and inspect the dummy variables
+weather_bake <- bake(weather_recipe, new_data = NULL)
+
+# Check Merge observations
+weather_bake %>%
+  select(starts_with("cloudcover")) %>%
+  summarise(across(everything(), sum))
+```
+
+Perfect! We only have three levels within our `cloudcover` variable now as we wanted.
+
+
+### Our Final Recipe 🧑‍🍳
+
+Let's now finalize our recipe.
+
+```{r class.source = "fold-show"}
+weather_recipe <- recipe(weather_type ~ temp + humidity + windspeed +   
+                         precip + cloudcover + atmospres + uvindex +    
+                         season + visibility + location, data = weather_train) %>% 
+  step_dummy(cloudcover, season, location, one_hot = TRUE) %>%  # one-hot-encoding
+  step_normalize(all_predictors())
+```
+
+### K-Crossfold Validation
+
+Before moving on, we need to fold the training set using *v*-fold cross-validation, with `v = 10` to stratify on our outcome variable `weather_type`.
+
+```{r class.source = "fold-show"}
+weather_folds <- vfold_cv(weather_train, v = 10, strata = weather_type)
+```
+
+## Building our Model 🛠
+
+With our weather dataset fully prepared, we can now proceed to model building. Since the dataset contains a mix of numerical and categorical features with moderate size, it provides an excellent opportunity to experiment with a range of classification models. Models like Logistic Regression, Linear Discriminant Analysis (LDA), and Quadratic Discriminant Analysis (QDA) will help establish baseline performance, while more advanced techniques, such as Random Forest, Gradient Boosted Trees, and Support Vector Machines (SVM), are well-suited for capturing complex patterns in the data.
+
+Each model will be assessed based on its ability to classify weather types accurately. To measure their performance, we’ll use key metrics such as accuracy and roc_auc, ensuring a thorough evaluation of each model’s strengths. Given the dataset's features, such as temperature, humidity, cloud cover, and wind speed, the advanced models are expected to leverage their strength in handling intricate relationships between predictors. Results will be saved and revisited for comparison, allowing us to determine which approach performs best for predicting weather conditions.
+
+### The Process 📋
+
+**1. Model Setup**: We begin by specifying the type of model, setting its engine, and defining its mode. Since we are predicting weather types, the mode is set to classification.
+
+**2. Workflow Creation**: We establish a workflow by linking the selected model to the preprocessing recipe we created earlier. This ensures that each model uses the same standardized and encoded dataset for training.
+
+**3. Baseline Model**: We will be using Logistic regression as our baseline model. It is straightforward and does not require hyperparameter tuning. It is fit directly to the training data using the established workflow to provide a benchmark for evaluating other models.
+
+**4. Tuning Advanced Models**: For more complex models like Decision Tree, Random Forest, Gradient Boosted Trees, and Support Vector Machines (SVM), we set up a tuning grid to explore a range of hyperparameter values. For instance, we may tune the number of trees or the learning rate in boosted trees or the kernel type in SVMs.
+
+**5. Selecting the Best Hyperparameters**: Using cross-validation, we determine the optimal hyperparameters for each advanced model by testing various combinations. The hyperparameters that yield the best performance are finalized in the workflow.
+
+**6. Model Fitting**: Once the workflows are finalized, we fit each model to the training dataset. This step ensures the models are optimized based on the training data.
+
+**7. Saving Results**: The trained models and their workflows are saved as .rda files. This allows us to revisit and compare results later without needing to re-train the models.
+
+### Baseline Model Setup ✏️
+
+Following our process, we're going to try fitting our training data to our multinomial logistic regression model.
+
+```{r class.source = "fold-show"}
+# Multinomial Logistic regression 
+weather_lg <- multinom_reg() %>%
+  set_engine("nnet") %>%
+  set_mode("classification")
+
+weather_lgworkflow <- workflow() %>%
+  add_model(weather_lg) %>%
+  add_recipe(weather_recipe)
+
+weather_lgfit <- fit(weather_lgworkflow, data = weather_train)
+```
+
+### Advanced Models Setup ⚙️
+
+Since we have built our baseline model, let's now build our other models: Decision Tree, Random Forest, XG-Boosted Trees, and Support Vector Machines.
+
+```{r class.source = "fold-show"}
+# Decision Tree (Pruned)
+dt_model <- decision_tree() %>%
+  set_engine("rpart") %>%
+  set_mode("classification") %>%
+  set_args(cost_complexity = tune())
+
+# DT workflow
+dt_wf <- workflow() %>%
+  add_model(dt_model) %>%
+  add_recipe(weather_recipe)
+
+# DT Grid
+dt_grid <- grid_regular(cost_complexity(range = c(-3, -1)), levels = 10)
+
+# Random Forest
+rf_model <- rand_forest(mtry = tune(),
+                        trees = tune(),
+                        min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+# RF workflow
+rf_wf <- workflow() %>%
+  add_model(rf_model) %>%
+  add_recipe(weather_recipe)
+
+# RF Grid
+rf_grid <- grid_regular(mtry(range = c(5, 10)),
+                        trees(range = c(200, 1000)),
+                        min_n(range = c(5, 20)),
+                        levels = 10)
+
+# Boosted Trees
+bt_model <- boost_tree(mtry = tune(), 
+                           trees = tune(), 
+                           learn_rate = tune()) %>%
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+
+# BT workflow
+bt_wf <- workflow() %>%
+  add_model(bt_model) %>%
+  add_recipe(weather_recipe)
+
+#BT grid
+bt_grid <- grid_regular(mtry(range = c(5, 10)),
+                        trees(range = c(400, 2000)),
+                        learn_rate(range = c(-10, -1)),
+                        levels = 10)
+
+# Support Vector Machines 
+svm_model <- svm_rbf(cost = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+# SVM workflow
+svm_rbf_wkflow <- workflow() %>%
+  add_recipe(weather_recipe) %>%
+  add_model(svm_model)
+
+# SVM Grid
+svm_rbf_grid <- grid_regular(cost(), levels = 5)
+
+```
+
+### Tuning our Advanced Models 📈
+
+Now that we have set up our models, let's try tuning and running our models. This may take awhile.
+
+```{r, class.source = "fold-show", eval = FALSE}
+# Tuning Pruned Decision Tree Model 
+tune_dt <- tune_grid(
+  dt_wf,
+  resamples = weather_folds,
+  grid = dt_grid,
+  metrics = metric_set(roc_auc, accuracy))
+
+save(tune_dt, file = "tune_dt.rda")
+
+# Tuning Random Forest Model
+tune_rf <- tune_grid(
+  rf_wf,
+  resamples = weather_folds,
+  grid = rf_grid,
+  metrics = metric_set(roc_auc, accuracy))
+
+save(tune_rf, file = "tune_rf.rda")
+
+# Tuning Boosted Tree Model 
+tune_bt <- tune_grid(
+  bt_wf,
+  resamples = weather_folds,
+  grid = bt_grid,
+  metrics = metric_set(roc_auc, accuracy))
+
+save(tune_bt, file = "tune_bt.rda")
+
+# Tuning SVM Model
+tune_svm <- tune_grid(
+  svm_rbf_wkflow,
+  resamples = weather_folds,
+  grid = svm_rbf_grid,
+  metrics = metric_set(roc_auc, accuracy))
+
+save(tune_svm, file = "tune_svm.rda")
+
+```
+
+### Loading Models ⏳
+
+Phew, they finally saved in time. Now, let's load in our saved models.
+
+```{r, class.source = "fold-show"}
+load("tune_dt.rda")
+load("tune_rf.rda")
+load("tune_bt.rda")
+load("tune_svm.rda")
+
+```
+
+## Plotting Our Models 📍
+
+After loading in our saved models, we can begin plotting them. We can also then investigate their ROC AUC and accuracy performances (for baseline model) as well.
+
+### Multinomial Logistic Regression ROC plot 📝
+
+We can start by visualizing the performance of our Multinomial Logistic Regression model.
+
+```{r}
+# Logistic Regression
+lg_predictions <- augment(weather_lgfit, new_data = weather_train, type = "prob")
+lg_trainroc <- lg_predictions %>%
+  roc_curve(weather_type, .pred_Rainy:.pred_Snowy) %>%
+  autoplot()
+lg_trainroc
+
+```
+
+For our ROC curves, the closer the curve is to the top left corner (reaching 1.00), the better the model classifies weather types. For `Snowy` and `Sunny`, the curves look great, almost hugging the top-left corner which means the model is doing a solid job at predicting these types. `Cloudy` and `Rainy` also perform well, but their curves are not as close.
+
+Our ROC curves seem to perform well, but now let's see how the ROC AUC score and accuracy perform.
+
+```{r}
+# Best Multinomial Logistic Regression 
+weather_lgfit <- fit_resamples(weather_lgworkflow, 
+                               resamples = weather_folds,
+                               metrics = metric_set(roc_auc, accuracy))
+collect_metrics(weather_lgfit)
+
+```
+
+With our multinomial logistic regression model achieving an accuracy of 86.2% and a ROC AUC of 95.7%, it indicates our model is effective at classifying weather types! This model sets a excellent baseline, providing a reliable benchmark as we explore more of our advanced models in the next section.
+
+### Decision Tree Autoplot 📉
+
+Unlike Logistic Regression, which relies on linear relationships between predictors, a Decision Tree splits the data into hierarchical branches based on feature importance. This makes it useful for capturing non-linear relationships and interactions between variables like `temperature`, `windspeed`, and `atmospres`. Let's now plot our decision tree.
+
+```{r}
+# Decision Tree
+autoplot(tune_dt, metric = "roc_auc")
+
+```
+
+From our plot, we see that our decision tree model performs best at a cost complexity of 0.001 as our `roc_auc` is 0.98. We see that the ROC AUC decreases as the cost-complexity parameter increases, indicating our model's performance is better with a smaller complexity penalty.
+
+### Pruned Decision Tree
+
+```{r fig.wdith = 12}
+# Decision Tree (pruned)
+best_pruned <- select_best(tune_dt, metric = "roc_auc")
+pruned_train <- finalize_workflow(dt_wf, best_pruned)
+best_dt_train <- fit(pruned_train, weather_train)
+
+best_dt_train %>%
+  extract_fit_engine() %>%
+  rpart.plot()
+```
+
+The tree highlights how weather features are interconnected. A combination of high precipitation and low UV index consistently points toward Rainy or Snowy predictions, while high UV index and clear skies predict Sunny weather with confidence.
+
+```{r}
+# Best Pruned Decision Tree
+tune_dt %>%
+  collect_metrics() %>% 
+  arrange(desc(mean)) %>%
+  slice(1:5)
+
+```
+
+Seems like our pruned decision tree performs best with a cost complexity parameter of 0.001. With an impressive `roc_auc`score of 0.98, this model does a fantastic job at effectively distinguishing between different weather types.
+
+### Random Forest Autoplot 〰️
+
+```{r fig.width = 9}
+# Random Forest
+autoplot(tune_rf, metric = "roc_auc") +
+  theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5))
+
+```
+
+The ROC AUC scores vary depending on the number of trees but it seems that our performance stabilizes as the number of trees increase so adding more trees would no longer significantly improve our performance. However, our `mtry` values between 5-6 result in slightly better performances as seen above, meaning minimal node sizes with smaller values achieve higher `roc_auc` for our model.
+
+From our Random forest plot, we claimed that our model performs best with a `mtry` of 5-6, so let's take a look and see a few of our best-performing RFs.
+
+```{r}
+tune_rf %>%
+  collect_metrics() %>%
+  arrange(desc(mean)) %>%
+  slice(1:5)
+
+```
+
+The table suggests a `mtry` between 5-6 is a solid spot for achieving the greatest `roc_auc`, with our best performing Random forest #385 achieving a ROC AUC of 0.9936 with `mtry = 5`, `trees = 555`, and `min_n = 15`.
+
+### Boosted Tree Autoplot 📏
+
+```{r fig.width = 8}
+# Boosted Tree Model
+autoplot(tune_bt, metric = "roc_auc")
+
+```
+
+Here, across all panels, the ROC AUC scores seem to be stable and close to 1, which suggests that our model is not sensitive to learning rate and performs well!
+
+```{r}
+# Boosted Tree Performance
+tune_bt %>%
+  collect_metrics() %>%
+  arrange(desc(mean)) %>%
+  slice(1:5)
+
+```
+
+Our XG-Boosted tree model performs with ROC AUC values consistently around 0.994, displaying an excellent score. Interestingly, the model isn't highly sensitive to changes in parameters like `mtry`, `trees`, or `learn_rate`. Here, our standout model is XG-Boosted tree model #83, with a `mtry = 5`, `trees = 755`, and `learn_rate = 1e-02`.
+
+### SVM Model Autoplot 📈
+
+```{r}
+#SVM Model
+autoplot(tune_svm, metric = "roc_auc")
+```
+
+From this autoplot, we observe that performance increases from 0.0078 to 2, eventually achieving its peak ROC AUC of approximately 0.96. However, beyond a cost of 2, the performance starts to decline slightly. Therefore, a moderate cost around 2 is the best balance between underfitting and overfitting for this dataset.
+
+```{r}
+tune_svm %>%
+  collect_metrics() %>%
+  arrange(desc(mean)) %>%
+  slice(1:5)
+
+```
+
+Our SVM model's ROC AUC varies more than the other models, with the best SVM model being SVM model #4, with a score of 0.9686 and cost of 2.378.
+
+## Model Comparison Results 🕵
+ 
+Since we've ran all our models on our training set, let's compile their results into a table for easier readability.
+
+```{r, eval = FALSE}
+lg_train <- collect_metrics(weather_lgfit) %>%
+  filter(.metric %in% "roc_auc") %>%
+  select(.metric, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  mutate(Model = "Multinomial Logistic Regression")
+
+dt_train <- collect_metrics(tune_dt) %>%
+  filter(.metric %in% "roc_auc") %>%
+  select(.metric, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  mutate(Model = "Pruned Decision Tree")
+
+rf_train <- collect_metrics(tune_rf) %>%
+  filter(.metric %in% "roc_auc") %>%
+  select(.metric, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  mutate(Model = "Random Forest")
+
+bt_train <- collect_metrics(tune_bt) %>%
+  filter(.metric %in% "roc_auc") %>%
+  select(.metric, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  mutate(Model = "XGBoost Model")
+
+svm_train <- collect_metrics(tune_svm) %>%
+  filter(.metric %in% "roc_auc") %>%
+  select(.metric, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  mutate(Model = "Support Vector Machine ")
+
+weather_train_results <- bind_rows(lg_train, dt_train, rf_train, bt_train, svm_train) %>%
+  arrange
+
+weather_train_results
+```
+
+| Model                           | ROC AUC Values |
+|---------------------------------|----------------|
+| Multinomial Logistic Regression | 0.95840        |
+| Pruned Decision Tree            | 0.98170        |
+| Random forest                   | 0.99362        |
+| XG-Boosted Tree                 | 0.99366        |
+| Support Vector Machine          | 0.96860        |
+
+We see that our Random forest and XG-Boosted tree perform neck-to-neck, with ROC AUC values of 0.993. Since they both had similar performances, we're going to select these two as our final models to see how they perform on our testing set.
+
+## Best Model(s) Performance 💯
+
+Now let's take a look at how well our models (Random forest & XG-Boosted Tree) perform on the testing set.
+
+```{r pressure, echo=FALSE, out.width = '40%', out.height = '40%'}
+knitr::include_graphics("xgboost.png")
+```
+
+### Best Random Forest Model Peformance 🌲
+
+Let's see if it can beat our XG-Boosted Tree model.
+
+```{r}
+# Test Random Forest #385
+best_rf_model <- select_best(tune_rf)
+rf_finalwf <- finalize_workflow(rf_wf, best_rf_model)
+final_rf_model <- fit(rf_finalwf, weather_train)
+
+final_rf_test <- augment(final_rf_model, weather_test) %>%
+  select(weather_type, starts_with(".pred"))
+
+roc_auc(final_rf_test, truth = weather_type, .pred_Rainy:.pred_Snowy) %>% mutate(.estimate = round(.estimate, 5))
+
+```
+
+```{r}
+# ROC Curve
+roc_curve(final_rf_test, truth = weather_type, .pred_Rainy:.pred_Snowy) %>%
+  autoplot()
+
+```
+
+Wow! Our Random Forest model #385 absolutely crushes it on our testing dataset. The ROC curves for all four weather types `Cloudy`, `Rainy`, `Snowy`, and `Sunny` are practically hugging the top-left corner, showing near-perfect sensitivity and specificity. We also see it has a `roc_auc` score of 0.9938. This might just be our best model!
+
+### Best Boosted Tree Model Performance 🌳🌳🌳
+
+The Random Forest Model had a high performance, can our XG-Boosted Tree Model beat it?
+
+```{r}
+# Test Boosted Tree Model
+best_bt_model <- select_best(tune_bt)
+bt_finalwf <- finalize_workflow(bt_wf, best_bt_model)
+final_bt_model <- fit(bt_finalwf, weather_train)
+
+final_bt_test <- augment(final_bt_model, weather_test) %>%
+  select(weather_type, starts_with(".pred"))
+
+roc_auc(final_bt_test, truth = weather_type,
+        .pred_Rainy:.pred_Snowy) %>%
+  mutate(.estimate = round(.estimate, 6))
+
+```
+
+```{r}
+# ROC Curve
+roc_curve(final_bt_test, truth = weather_type, .pred_Rainy:.pred_Snowy) %>%
+  autoplot()
+```
+
+Take a look at this! Our XG-Boosted Tree model performs about the same, but falls short about by 0.00023. So Close! However, it performs remarkably with a `roc_auc` of 0.99365 and as seen in the autoplot, almost makes a perfect upside down L.
+
+## Our Winning Model 🌟
+
+So...... the best model goes to... Random Forest #385 with a ROC AUC score of 0.9938!
+
+```{r, echo=FALSE, out.width = '40%', out.height = '40%'}
+knitr::include_graphics("giphy.webp", error = FALSE)
+```
+
+### Good Accuracy? ✅
+
+Since we already have seen our best model's ROC AUC, let's also see its accuracy.
+
+```{r}
+accuracy(final_rf_test, truth = weather_type, .pred_class)
+  
+```
+
+Our Random Forest model achieved a strong 92% accuracy on the test data, meaning it was able to predict different weather types with that high of an accuracy!
+
+
+### Variable Importance Chart ⛅
+
+Since our Random Forest Model was our winner, let's take a deep dive and see what were the most important features.
+
+```{r}
+final_rf_model %>%
+  extract_fit_parsnip() %>%
+  vip::vi() %>%
+  mutate(
+    Variable = case_when(
+      startsWith(Variable, "cloudcover") ~ "cloudcover",
+      startsWith(Variable, "season") ~ "season",
+      startsWith(Variable, "location") ~ "location",
+      TRUE ~ Variable
+    )
+  ) %>%
+  group_by(Variable) %>% # Group by combined variables
+  summarize(Importance = sum(Importance), .groups = "drop") %>% # Sum importance for each group
+  ggplot(aes(x = reorder(Variable, Importance), y = Importance, fill = Variable)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_brewer(palette = "Set3") +
+  coord_flip() +
+  xlab("Variables")
+```
+
+In our Random Forest model, `temp` stands out as the most influential factor in predicting weather types, which aligns with its fundamental role in weather patterns.
+
+`visibility`, `uvindex`, and `precip` follow closely, indicating their importance in distinguishing between different weather conditions, such as clear skies or rain. `atmospres` also plays a significant role, helping the model identify shifts in weather systems.
+
+`season` and `cloudcover` provide additional context, while features like humidity, wind speed, and location have less influence but still contribute valuable details to refine predictions. This combination of factors gives our model a strong foundation for accurate weather classification.
+
+### Confusion Matrix Heat Map 💥
+Before we conclude, let's see which weather type our model was most accurate at predicting!
+```{r}
+set.seed(1178)
+
+# Confusion matrix heat map
+conf_mat(final_rf_test, truth = weather_type,
+         .pred_class) %>%
+  autoplot(type = "heatmap")
+
+```
+
+On our best performing model, it's clear that the model seems to be most accurate in identifiying Snowy and Sunny weather. We see that Snow and Sunny the two highest in the diagonal. We also notice that the model struggles slightly more with predicting Cloudy and Rainy types, which may be due to subtle distinguishing features between those weather types.
+
+## Conclusion 👀
+We've finally made it to the last section! Throughout this project, we've fit a total of five different models, including Multinomial Logistic Regression, Pruned Decision Tree, Random Forest, XG-Boosted Tree, and Support Vector Machine models. Out of these five models, we narrowed it down to a tight battle between our Random Forest and XG-Boosted tree model, which then ultimately resulted in our Random Forest being the best overall model when fit on our testing dataset! It had a remarkable ROC AUC of 0.994 and an accuracy of 0.92 on our testing set. On the other hand, our Logistic Regression model struggled to match the performance of the more complex models, likely due to its more simplistic nature. While the Random Forest model had an impressive performance, there still remains room for some improvement. 
+
+For further exploration into this dataset, we could possibly implement a Naive Bayes model. By leveraging its probabilistic approach, Naive Bayes could complement our more complex models by focusing on identifying subtle patterns in categorical and numerical relationships. For example, we could apply Gaussian Naive Bayes to continuous variables like temperature and visibility, potentially uncovering trends that other models might overlook. To make this model even more effective, the next steps would involve addressing outliers in the dataset. Features like precipitation and wind speed include extreme values that could skew the results, so we would first remove or cap these outliers to ensure cleaner, more reliable data for training. This preprocessing could refine the dataset, making it easier for Naive Bayes and our other models to capture meaningful probabilities.
+
+While testing our models, we also gained insights into features that play a significant part in our modeling data. As we saw, our top three features were temperature, visibility, and precipitation, backing up our initial intuition. Additionally, other features such as atmospheric pressure, UV index, and humidity contributed meaningfully to the models, albeit to a lesser extent. For example, atmospheric pressure often influences stormy weather, and UV index helps differentiate between sunny and overcast days. These findings reinforced the interconnected nature of weather variables and highlighted the importance of leveraging a combination of both numerical and categorical features for accurate predictions.
+
+Overall, weather prediction is an extremely challenging task, and while weather forecasts aren't always 100% perfect, advancements within the field are continuously improving their accuracy. With this project, we were able to successfully train several models to our weather data, gain insights into the factors that drive weather patterns, and accurately predict the weather type! 
+
+This concludes the entire report. Thank you for reading to the end <3. I am absolutely a weather enthusiastic, and working on this project was an amazing opportunity to put my data skills to use!
+
+
+```{r, echo=FALSE, out.width = '50%', out.height = '50%'}
+# Signing off
+knitr::include_graphics("signoff.gif", error = FALSE)
+```
+
+
+## Sources 🌐
+The weather dataset used in this analysis was created by [Nikhil Narayan, Kaggle, 2024](https://www.kaggle.com/datasets/nikhil7280/weather-type-classification). This dataset is synthetically generated to mimic weather data for classification tasks and is intended for practicing classification algorithms, data preprocessing, and outlier detection.
+
